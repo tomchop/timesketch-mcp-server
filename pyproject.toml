@@ -1,0 +1,10 @@
+[project]
+name = "timesketch-mcp-server"
+version = "0.1.0"
+description = "MCP server for Timesketch"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.6.1",
+    "timesketch-api-client>=20250521",
+]
