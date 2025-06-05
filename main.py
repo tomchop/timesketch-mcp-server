@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastmcp import Context, FastMCP
+from fastmcp.server.dependencies import get_context
+
 from timesketch_api_client import aggregation, search
 from timesketch_api_client.client import TimesketchApi
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ mcp = FastMCP(
 
 
 def _get_timesketch_client():
-    ctx: Context = mcp.get_context()
+    ctx: Context = get_context()
     if not hasattr(ctx.request_context, "lifespan_context"):
         raise RuntimeError("Lifespan context is not available")
     return ctx.request_context.lifespan_context.ts_client
