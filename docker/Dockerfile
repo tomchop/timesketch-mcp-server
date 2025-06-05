@@ -22,7 +22,7 @@ ENV PYTHONPATH /app
 # CMD ["uv", "run", "python", "main.py", "--mcp-host", "0.0.0.0", "--mcp-port", "8081"]
 
 # Keep the container running
-CMD ["tail", "-f", "/dev/null"]
+CMD ["sleep", "infinity"]
 
 # Can be replaced with the following to run directly:
 # CMD ["uv", "run", "python", "main.py", "--mcp-host", "0.0.0.0", "--mcp-port", "8081"]
