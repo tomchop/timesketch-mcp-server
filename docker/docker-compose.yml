@@ -12,3 +12,9 @@ services:
       - TIMESKETCH_PASSWORD=${TIMESKETCH_PASSWORD}
     volumes:
       - ../:/app
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
