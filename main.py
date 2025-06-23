@@ -81,7 +81,7 @@ async def discover_data_types(sketch_id: int):
 async def search_timesketch_events(
     sketch_id: int,
     query: str,
-    filter_return_fields: list[str] | None = None,
+    filter_return_fields: list[str],
     max_events: int = 500,
     sort: str = "asc",
     starred: bool = False,
