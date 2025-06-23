@@ -82,7 +82,7 @@ async def search_timesketch_events(
     sketch_id: int,
     query: str,
     filter_return_fields: list[str] | None = None,
-    max_events: int | None = None,
+    max_events: int = 500,
     sort: str = "asc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
@@ -90,7 +90,7 @@ async def search_timesketch_events(
     Search a Timesketch sketch and return a list of event dictionaries
       (limited by max_events, if provided).
 
-        Events always contain the following fields:
+        Events always contain the following fields so ONLY USE THE BELOW FIELDS in your search quieries:
         • datetime (useful for sorting)
         • data_type (useful for filtering).
         • message
