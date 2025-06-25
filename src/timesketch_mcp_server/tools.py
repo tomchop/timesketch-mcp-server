@@ -1,53 +1,11 @@
-import argparse
-import logging
-import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any
 
-from fastmcp import Context, FastMCP
-from fastmcp.server.dependencies import get_context
-
+from .utils import get_timesketch_client
 from timesketch_api_client import aggregation, search
-from timesketch_api_client.client import TimesketchApi
 
+from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AppContext:
-    ts_client: TimesketchApi
-
-
-@asynccontextmanager
-async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    host_uri = f"http://{os.environ.get('TIMESKETCH_HOST')}:{os.environ.get('TIMESKETCH_PORT', '5000')}/"
-    ts_client = TimesketchApi(
-        host_uri=host_uri,
-        username=os.environ.get("TIMESKETCH_USER"),
-        password=os.environ.get("TIMESKETCH_PASSWORD"),
-    )
-    try:
-        yield AppContext(ts_client=ts_client)
-    finally:
-        pass
-
-
-mcp = FastMCP(
-    "timesketch-mcp", dependencies=["timesketch-api-client"], lifespan=app_lifespan
-)
-
-
-def _get_timesketch_client():
-    ctx: Context = get_context()
-    if not hasattr(ctx.request_context, "lifespan_context"):
-        raise RuntimeError("Lifespan context is not available")
-    return ctx.request_context.lifespan_context.ts_client
-
-
-# Timesketch tools
+mcp = FastMCP(name="timesketch-tools")
 
 
 @mcp.tool()
@@ -64,7 +22,7 @@ async def discover_data_types(sketch_id: int):
         - count: The number of events for that data type.
     """
 
-    sketch = _get_timesketch_client().get_sketch(sketch_id)
+    sketch = get_timesketch_client().get_sketch(sketch_id)
     aggregator_name = "field_bucket"
     aggregator_params = {
         "field": "data_type",
@@ -122,7 +80,7 @@ async def search_timesketch_events(
         and optionally yara_match and sha256_hash if they are present in the results.
     """
 
-    sketch = _get_timesketch_client().get_sketch(sketch_id)
+    sketch = get_timesketch_client().get_sketch(sketch_id)
     if not sketch:
         raise ValueError(f"Sketch with ID {sketch_id} not found.")
 
@@ -168,34 +126,3 @@ async def search_timesketch_events(
         ]
 
     return results_dict
-
-
-def main():
-    parser = argparse.ArgumentParser(description="MCP server for Timesketch")
-    parser.add_argument(
-        "--mcp-host",
-        type=str,
-        help="Host to run MCP server on (only used for sse), default: 127.0.0.1",
-        default="127.0.0.1",
-    )
-    parser.add_argument(
-        "--mcp-port",
-        type=int,
-        help="Port to run MCP server on (only used for sse), default: 8081",
-        default=8081,
-    )
-
-    args = parser.parse_args()
-
-    logger.info(f"Running MCP server on {args.mcp_host}:{args.mcp_port}")
-    try:
-        mcp.settings.port = args.mcp_port
-        mcp.settings.host = args.mcp_host
-        mcp.run(transport="sse")
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-        return
-
-
-if __name__ == "__main__":
-    main()
