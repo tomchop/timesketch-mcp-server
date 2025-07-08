@@ -8,8 +8,31 @@ from fastmcp import FastMCP
 mcp = FastMCP(name="timesketch-tools")
 
 
+async def _run_field_bucket_aggregation(
+    sketch: Any, field: str
+) -> list[dict[str, int]]:
+    """
+    Helper function to run a field bucket aggregation on a Timesketch sketch.
+
+    Args:
+        sketch: The Timesketch sketch object.
+        field: The field to aggregate on.
+
+    Returns:
+        A list of dictionaries containing the field bucket aggregation results.
+    """
+    aggregation_result = sketch.run_aggregator(
+        aggregator_name="field_bucket",
+        aggregator_parameters={
+            "field": field,
+            "limit": "10000",
+        },
+    )
+    return aggregation_result.data.get("objects")[0]["field_bucket"]["buckets"]
+
+
 @mcp.tool()
-async def discover_data_types(sketch_id: int):
+async def discover_data_types(sketch_id: int) -> list[dict[str, int]]:
     """
     Discover data types in a Timesketch sketch.
 
@@ -23,23 +46,32 @@ async def discover_data_types(sketch_id: int):
     """
 
     sketch = get_timesketch_client().get_sketch(sketch_id)
-    aggregator_name = "field_bucket"
-    aggregator_params = {
-        "field": "data_type",
-        "limit": "10000",
-    }
+    return _run_field_bucket_aggregation(sketch, "data_type")
 
-    aggregation_result: aggregation.Aggregation = sketch.run_aggregator(
-        aggregator_name=aggregator_name, aggregator_parameters=aggregator_params
-    )
-    return aggregation_result.data.get("objects")[0]["field_bucket"]["buckets"]
+
+@mcp.tool()
+async def count_distinct_field_values(
+    sketch_id: int, field: str
+) -> list[dict[str, int]]:
+    """Runs an aggregation to count distinct values for the specified field.
+
+    Args:
+        sketch_id: The ID of the Timesketch sketch to run the aggregation on.
+        field: The field to count distinct values for, eg. "data_type",
+            "source_ip", "yara_match".
+
+    Returns:
+        A list of dictionaries containing the aggregation results.
+    """
+
+    sketch = get_timesketch_client().get_sketch(sketch_id)
+    return _run_field_bucket_aggregation(sketch, field)
 
 
 @mcp.tool()
 async def search_timesketch_events(
     sketch_id: int,
     query: str,
-    filter_return_fields: list[str],
     max_events: int = 500,
     sort: str = "asc",
     starred: bool = False,
@@ -68,8 +100,6 @@ async def search_timesketch_events(
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
         query: The Lucene/OpenSearch query string to use for searching.
-        filter_return_fields: A list of fields to return in the results. If None, defaults to
-            "datetime, message, data_type, tag, yara_match, sha256_hash".
         max_events: Optional maximum number of events to return. If None, returns all matching events.
         sort: Sort order for datetime field, either "asc" or "desc". Default is "asc".
         starred: If True, only return starred events. If False, return all events.
@@ -78,6 +108,10 @@ async def search_timesketch_events(
         A list of dictionaries representing the events found in the sketch.
         Each dictionary contains fields like datetime, data_type, tag, message,
         and optionally yara_match and sha256_hash if they are present in the results.
+
+    Raises:
+        ValueError: If the sketch with the given ID does not exist.
+        RuntimeError: If the search fails for any reason. Usually due to an invalid query.
     """
 
     sketch = get_timesketch_client().get_sketch(sketch_id)
@@ -101,7 +135,10 @@ async def search_timesketch_events(
         star_chip.use_star_label()
         search_instance.add_chip(star_chip)
 
-    result_df = search_instance.table
+    try:
+        result_df = search_instance.table
+    except Exception as e:
+        raise RuntimeError(f"Search failed: {e}")
 
     if result_df.empty:
         return []
@@ -118,11 +155,5 @@ async def search_timesketch_events(
     results_dict = result_df[
         ["datetime", "data_type", "tag", "message"] + extra_cols
     ].to_dict(orient="records")
-
-    if filter_return_fields:
-        results_dict = [
-            {k: v for k, v in r.items() if k in filter_return_fields}
-            for r in results_dict
-        ]
 
     return results_dict
