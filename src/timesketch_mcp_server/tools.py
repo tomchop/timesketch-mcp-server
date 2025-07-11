@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 from .utils import get_timesketch_client
 from timesketch_api_client import aggregation, search
@@ -96,7 +96,7 @@ async def search_timesketch_events_substrings(
     substrings: list[str],
     regex: bool = False,
     boolean_operator: str = "AND",
-    limit: int | None = None,
+    limit: Optional[int] = None,
     sort: str = "asc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
@@ -225,7 +225,7 @@ async def search_timesketch_events_advanced(
 def _do_timesketch_search(
     sketch_id: int,
     query: str,
-    limit: int | None = None,
+    limit: Optional[int] = None,
     sort: str = "asc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
