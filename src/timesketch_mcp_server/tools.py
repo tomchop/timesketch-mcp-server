@@ -96,7 +96,7 @@ async def search_timesketch_events_substrings(
     substrings: list[str],
     regex: bool = False,
     boolean_operator: str = "AND",
-    limit: int = 500,
+    limit: int | None = None,
     sort: str = "asc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
@@ -116,8 +116,10 @@ async def search_timesketch_events_substrings(
             simple substrings. Defaults to False.
         boolean_operator: The boolean operator to use for combining multiple
             substring queries. Must be one of "AND" or "OR". Defaults to "AND".
-        limit: Optional maximum number of events to return. Defaults to 500.
+        limit: Optional maximum number of events to return. DANGEROUS: might
+            skip important events, do not use unless explicitly needed.
         sort: Sort order for datetime field, either "asc" or "desc". Default is "asc".
+            Useful for getting the most recent or oldest events.
         starred: If True, only return starred events. If False, return all events.
 
     Returns:
@@ -223,7 +225,7 @@ async def search_timesketch_events_advanced(
 def _do_timesketch_search(
     sketch_id: int,
     query: str,
-    limit: int = 500,
+    limit: int | None = None,
     sort: str = "asc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
@@ -232,7 +234,7 @@ def _do_timesketch_search(
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
         query: The Lucene/OpenSearch query string to use for searching.
-        limit: Optional maximum number of events to return. Defaults to 500.
+        limit: Optional maximum number of events to return.
         sort: Sort order for datetime field, either "asc" or "desc". Default is
             "asc".
         starred: If True, only return starred events. If False, return all events.
