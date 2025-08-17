@@ -1,9 +1,11 @@
-from typing import Any, Optional
+from typing import Any
 
 from .utils import get_timesketch_client
-from timesketch_api_client import aggregation, search
+from timesketch_api_client import search
+from collections import defaultdict
+import pandas as pd
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(name="timesketch-tools")
 
@@ -33,13 +35,16 @@ RESERVED_CHARS = [
 ]
 
 
-def _run_field_bucket_aggregation(sketch: Any, field: str) -> list[dict[str, int]]:
+def _run_field_bucket_aggregation(
+    sketch: Any, field: str, limit: int = 10000
+) -> list[dict[str, int]]:
     """
     Helper function to run a field bucket aggregation on a Timesketch sketch.
 
     Args:
         sketch: The Timesketch sketch object.
         field: The field to aggregate on.
+        limit: The maximum number of buckets to return. Defaults to 10000.
 
     Returns:
         A list of dictionaries containing the field bucket aggregation results.
@@ -48,14 +53,14 @@ def _run_field_bucket_aggregation(sketch: Any, field: str) -> list[dict[str, int
         aggregator_name="field_bucket",
         aggregator_parameters={
             "field": field,
-            "limit": "10000",
+            "limit": limit,
         },
     )
     return aggregation_result.data.get("objects")[0]["field_bucket"]["buckets"]
 
 
 @mcp.tool()
-async def discover_data_types(sketch_id: int) -> list[dict[str, int]]:
+def discover_data_types(sketch_id: int) -> list[dict[str, int]]:
     """Discover data types in a Timesketch sketch.
 
     Args:
@@ -72,9 +77,7 @@ async def discover_data_types(sketch_id: int) -> list[dict[str, int]]:
 
 
 @mcp.tool()
-async def count_distinct_field_values(
-    sketch_id: int, field: str
-) -> list[dict[str, int]]:
+def count_distinct_field_values(sketch_id: int, field: str) -> list[dict[str, int]]:
     """Runs an aggregation to count distinct values for the specified field.
 
     Args:
@@ -91,16 +94,52 @@ async def count_distinct_field_values(
 
 
 @mcp.tool()
-async def search_timesketch_events_substrings(
+def discover_fields_for_datatype(sketch_id: int, data_type: str) -> list[str]:
+    """Discover fields for a specific data type in a Timesketch sketch.
+
+    Args:
+        sketch_id: The ID of the Timesketch sketch to discover fields from.
+        data_type: The data type to discover fields for.
+
+    Returns:
+        A list of field names that are present in the events of the specified data type.
+    """
+
+    events = do_timesketch_search(
+        sketch_id=sketch_id, query=f'data_type:"{data_type}"', limit=1000, sort="desc"
+    ).to_dict(orient="records")
+    fields = defaultdict(dict)
+    sketch = get_timesketch_client().get_sketch(sketch_id)
+    for event in events:
+        for field in event.keys():
+            if field in fields:
+                continue
+
+            top_values = _run_field_bucket_aggregation(sketch, field, limit=10)
+            max_occurrences = max([value["count"] for value in top_values], default=0)
+
+            # If the max occurrences for this field is less than 10,
+            # it means it's probably unique.
+            if max_occurrences < 10:
+                fields[field] = None
+                continue
+
+            examples = [value[field] for value in top_values]
+            fields[field] = examples
+
+    return [field for field in fields.keys() if fields[field] is not None]
+
+
+@mcp.tool()
+def search_timesketch_events_substrings(
     sketch_id: int,
     substrings: list[str],
     regex: bool = False,
     boolean_operator: str = "AND",
-    limit: Optional[int] = None,
     sort: str = "desc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
-    """Searches timesketch events for specific substrings in the event messages.
+    """Search a Timesketch sketch and return a list of event dictionaries.
 
     This is the preferred method to use when searching for specific substrings in
     event messages.
@@ -116,8 +155,6 @@ async def search_timesketch_events_substrings(
             simple substrings. Defaults to False.
         boolean_operator: The boolean operator to use for combining multiple
             substring queries. Must be one of "AND" or "OR". Defaults to "AND".
-        limit: Optional maximum number of events to return. DANGEROUS: might
-            skip important events, do not use unless explicitly needed.
         sort: Sort order for datetime field, either "asc" or "desc". Default is "desc".
             Useful for getting the most recent or oldest events.
         starred: If True, only return starred events. If False, return all events.
@@ -127,7 +164,7 @@ async def search_timesketch_events_substrings(
         Each dictionary contains fields like datetime, data_type, tag, message,
         and optionally yara_match and sha256_hash if they are present in the results.
 
-        If the query errors, an error string is returned instead.
+        If the query errors, an error object is returned instead.
     """
 
     if not substrings:
@@ -147,35 +184,34 @@ async def search_timesketch_events_substrings(
             continue
 
         if regex:
-            terms.append(f"message.keyword:/.*{substring}.*/")
+            terms.append(f"/.*{substring}.*/")
         else:
             for char in RESERVED_CHARS:
                 substring = substring.replace(char, f"\\{char}")
-            terms.append(f"message.keyword:*{substring}*")
+            terms.append(f"*{substring}*")
 
     query = boolean_operator.join(terms)
     try:
-        return _do_timesketch_search(
+        results_df = do_timesketch_search(
             sketch_id=sketch_id,
             query=query,
-            limit=limit,
             sort=sort,
             starred=starred,
         )
+        return results_df.to_dict(orient="records")
     except Exception as e:
-        return "Error: " + str(e)
+        return [{"result": f"Error: {str(e)}"}]
 
 
 @mcp.tool()
-async def search_timesketch_events_advanced(
+def search_timesketch_events_advanced(
     sketch_id: int,
     query: str,
-    limit: Optional[int] = None,
     sort: str = "desc",
     starred: bool = False,
-) -> list[dict[str, Any]] | str:
+) -> list[dict[str, Any]]:
     """
-    Search a Timesketch sketch and return a list of event dictionaries.
+    Search a Timesketch sketch using Lucene queries and return a list of event dictionaries.
 
         Events always contain the following fields:
         • datetime (useful for sorting)
@@ -197,7 +233,6 @@ async def search_timesketch_events_advanced(
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
         query: The Lucene/OpenSearch query string to use for searching.
-        limit: Optional maximum number of events to return.
         sort: Sort order for datetime field, either "asc" or "desc". Default is "desc".
         starred: If True, only return starred events. If False, return all events.
 
@@ -206,29 +241,29 @@ async def search_timesketch_events_advanced(
         Each dictionary contains fields like datetime, data_type, tag, message,
         and optionally yara_match and sha256_hash if they are present in the results.
 
-        If the query errors, an error string is returned instead.
+        If the query errors, an error object is returned instead.
     """
 
     try:
-        return _do_timesketch_search(
+        results_df = do_timesketch_search(
             sketch_id=sketch_id,
             query=query,
-            limit=limit,
             sort=sort,
             starred=starred,
         )
+        return results_df.to_dict(orient="records")
     except Exception as e:
-        return "Error: " + str(e)
+        return [{"result": f"Error: {str(e)}"}]
 
 
-def _do_timesketch_search(
+def do_timesketch_search(
     sketch_id: int,
     query: str,
-    limit: Optional[int] = None,
+    limit: int = 300,
     sort: str = "desc",
     starred: bool = False,
-) -> list[dict[str, Any]]:
-    """Helper function to perform a search on a Timesketch sketch.
+) -> pd.DataFrame:
+    """Performs a search on a Timesketch sketch and returns a pandas DataFrame.
 
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
@@ -237,6 +272,9 @@ def _do_timesketch_search(
         sort: Sort order for datetime field, either "asc" or "desc". Default is
             "desc".
         starred: If True, only return starred events. If False, return all events.
+
+    Returns:
+        A pandas DataFrame containing the search results.
 
     Raises:
         ValueError: If the sketch with the given ID does not exist.
@@ -248,11 +286,13 @@ def _do_timesketch_search(
 
     search_instance = search.Search(sketch=sketch)
     search_instance.query_string = query
+
     if limit:
         search_instance.max_entries = limit
-    search_instance.return_fields = (
-        "_id, _index, datetime, message, data_type, tag, yara_match, sha256_hash"
-    )
+    else:
+        search_instance.max_entries = search_instance.expected_size + 1
+
+    search_instance.return_fields = "*,_id"
     if sort == "desc":
         search_instance.order_descending()
     else:
@@ -266,7 +306,7 @@ def _do_timesketch_search(
     result_df = search_instance.table
 
     if result_df.empty:
-        return []
+        return result_df
 
     extra_cols = []
     if "yara_match" in result_df.columns:
@@ -277,10 +317,9 @@ def _do_timesketch_search(
         result_df["sha256_hash"] = result_df["sha256_hash"].fillna("N/A")
         extra_cols.append("sha256_hash")
 
-    results_dict = (
-        result_df[["_id", "datetime", "data_type", "tag", "message"] + extra_cols]
-        .fillna("N/A")
-        .to_dict(orient="records")
-    )
+    # We convert the datetime column to ISO format so it shows up as a
+    # serializable string and not a datetime object.
+    result_df["datetime"] = result_df["datetime"].apply(lambda x: x.isoformat())
+    result_df = result_df.fillna("N/A")
 
-    return results_dict
+    return result_df
