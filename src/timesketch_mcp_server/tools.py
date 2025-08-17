@@ -5,7 +5,7 @@ from timesketch_api_client import search
 from collections import defaultdict
 import pandas as pd
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 mcp = FastMCP(name="timesketch-tools")
 
