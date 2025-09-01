@@ -259,7 +259,7 @@ def search_timesketch_events_advanced(
         return [{"result": f"Error: {str(e)}"}]
 
 
-def retry(tries: int, delay: int = 1, error_types: tuple[type[Exception]] = []):
+def retry(tries: int, delay: int = 5, error_types: tuple[type[Exception]] = []):
     """Retry decorator to retry a function call on specified exceptions.
 
     Args:
@@ -287,7 +287,7 @@ def retry(tries: int, delay: int = 1, error_types: tuple[type[Exception]] = []):
                         print(
                             f"error: {str(e)}. Retrying {func.__name__} after {delay} seconds"
                         )
-                        time.sleep(delay)
+                        time.sleep(delay * (i + 1))
                     else:
                         raise
 
