@@ -1,12 +1,15 @@
+import logging
+import time
+from collections import defaultdict
 from typing import Any
 
-from .utils import get_timesketch_client
-from timesketch_api_client import search
-from collections import defaultdict
 import pandas as pd
-
 from fastmcp import FastMCP
+from timesketch_api_client import search
 
+from .utils import get_timesketch_client
+
+logger = logging.getLogger(__name__)
 mcp = FastMCP(name="timesketch-tools")
 
 RESERVED_CHARS = [
@@ -256,6 +259,44 @@ def search_timesketch_events_advanced(
         return [{"result": f"Error: {str(e)}"}]
 
 
+def retry(tries: int, delay: int = 5, error_types: tuple[type[Exception]] = []):
+    """Retry decorator to retry a function call on specified exceptions.
+
+    Args:
+        tries: Number of times to try the function call.
+        delay: Delay in seconds between retries. Default is 1 second.
+        error_types: A tuple of exception types to catch and retry on. If empty,
+            all exceptions are caught. Default is an empty tuple.
+    """
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for i in range(tries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if error_types and not isinstance(e, tuple(error_types)):
+                        raise e
+                    if i < tries - 1:
+                        logger.warning(
+                            "error: %s. Retrying %s after %d seconds",
+                            str(e),
+                            func.__name__,
+                            delay,
+                        )
+                        print(
+                            f"error: {str(e)}. Retrying {func.__name__} after {delay} seconds"
+                        )
+                        time.sleep(delay * (i + 1))
+                    else:
+                        raise
+
+        return wrapper
+
+    return decorator
+
+
+@retry(tries=3, delay=10, error_types=(ValueError,))
 def do_timesketch_search(
     sketch_id: int,
     query: str,
