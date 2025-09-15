@@ -1,10 +1,10 @@
-from collections import defaultdict
 import logging
 import time
+from collections import defaultdict
 from typing import Any, Callable, TypeVar
 
-from mcp.server.fastmcp import FastMCP
 import pandas as pd
+from fastmcp import FastMCP
 from timesketch_api_client import search
 
 from .utils import get_timesketch_client
