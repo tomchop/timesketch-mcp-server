@@ -1,10 +1,10 @@
+from collections import defaultdict
 import logging
 import time
-from collections import defaultdict
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+from mcp.server.fastmcp import FastMCP
 import pandas as pd
-from fastmcp import FastMCP
 from timesketch_api_client import search
 
 from .utils import get_timesketch_client
@@ -259,18 +259,23 @@ def search_timesketch_events_advanced(
         return [{"result": f"Error: {str(e)}"}]
 
 
-def retry(tries: int, delay: int = 5, error_types: tuple[type[Exception]] = []):
+T = TypeVar("T")
+
+
+def retry(
+    tries: int, delay: int = 5, error_types: tuple[type[Exception], ...] = ()
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """Retry decorator to retry a function call on specified exceptions.
 
     Args:
         tries: Number of times to try the function call.
         delay: Delay in seconds between retries. Default is 1 second.
         error_types: A tuple of exception types to catch and retry on. If empty,
-            all exceptions are caught. Default is an empty tuple.
+          all exceptions are caught. Default is an empty tuple.
     """
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        def wrapper(*args, **kwargs) -> T:
             for i in range(tries):
                 try:
                     return func(*args, **kwargs)
@@ -285,7 +290,8 @@ def retry(tries: int, delay: int = 5, error_types: tuple[type[Exception]] = []):
                             delay,
                         )
                         print(
-                            f"error: {str(e)}. Retrying {func.__name__} after {delay} seconds"
+                            f"error: {str(e)}. Retrying {func.__name__} after"
+                            f" {delay} seconds"
                         )
                         time.sleep(delay * (i + 1))
                     else:
