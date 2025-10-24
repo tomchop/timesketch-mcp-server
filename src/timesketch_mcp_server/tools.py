@@ -1,6 +1,6 @@
+from collections import defaultdict
 import logging
 import time
-from collections import defaultdict
 from typing import Any, Callable, TypeVar
 
 import pandas as pd
@@ -36,6 +36,44 @@ RESERVED_CHARS = [
     "\\",
     "/",
 ]
+
+
+@mcp.tool()
+def tag_events(
+    sketch_id: int, event_ids: list[str], tag_name: str
+) -> list[dict[str, str | int]]:
+    """Tags events in a list of dictionaries with a given tag."""
+    sketch = get_timesketch_client().get_sketch(sketch_id)
+    events = do_timesketch_search(
+        sketch_id=sketch_id,
+        query=f"_id:({' OR '.join([f'"{eid}"' for eid in event_ids])})",
+        return_fields="_id,_index",
+    ).to_dict(orient="records")
+    breakpoint()
+    result = sketch.tag_events(events, [tag_name])
+    tagged = result.get("number_of_events_with_added_tags", 0)
+    return {
+        "result": f"Tagged {tagged} events.",
+        "tagged_events": tagged,
+        "failed_events": len(events) - tagged,
+    }
+
+
+@mcp.tool()
+def comment_events(
+    sketch_id: int, event_ids: list[str], annotation: str
+) -> list[dict[str, str | int]]:
+    """Adds a comment to Timesketch events."""
+    sketch = get_timesketch_client().get_sketch(sketch_id)
+    events = do_timesketch_search(
+        sketch_id=sketch_id,
+        query=f"_id:({' OR '.join([f'"{eid}"' for eid in event_ids])})",
+        return_fields="_id,_index",
+    ).to_dict(orient="records")
+    for event in events:
+        sketch.comment_event(event["_id"], event["_index"], annotation)
+
+    return {"result": "Success"}
 
 
 def _run_field_bucket_aggregation(
@@ -289,10 +327,6 @@ def retry(
                             func.__name__,
                             delay,
                         )
-                        print(
-                            f"error: {str(e)}. Retrying {func.__name__} after"
-                            f" {delay} seconds"
-                        )
                         time.sleep(delay * (i + 1))
                     else:
                         raise
@@ -309,6 +343,7 @@ def do_timesketch_search(
     limit: int = 300,
     sort: str = "desc",
     starred: bool = False,
+    return_fields: str = "*,_id",
 ) -> pd.DataFrame:
     """Performs a search on a Timesketch sketch and returns a pandas DataFrame.
 
@@ -317,15 +352,18 @@ def do_timesketch_search(
         query: The Lucene/OpenSearch query string to use for searching.
         limit: Optional maximum number of events to return.
         sort: Sort order for datetime field, either "asc" or "desc". Default is
-            "desc".
+          "desc".
         starred: If True, only return starred events. If False, return all events.
+        return_fields: Comma-separated list of fields to return. Default is
+          "*,_id".
 
     Returns:
         A pandas DataFrame containing the search results.
 
     Raises:
         ValueError: If the sketch with the given ID does not exist.
-        RuntimeError: If the search fails for any reason. Usually due to an invalid query.
+        RuntimeError: If the search fails for any reason. Usually due to an
+        invalid query.
     """
     sketch = get_timesketch_client().get_sketch(sketch_id)
     if not sketch:
@@ -339,7 +377,7 @@ def do_timesketch_search(
     else:
         search_instance.max_entries = search_instance.expected_size + 1
 
-    search_instance.return_fields = "*,_id"
+    search_instance.return_fields = return_fields
     if sort == "desc":
         search_instance.order_descending()
     else:
@@ -366,7 +404,19 @@ def do_timesketch_search(
 
     # We convert the datetime column to ISO format so it shows up as a
     # serializable string and not a datetime object.
-    result_df["datetime"] = result_df["datetime"].apply(lambda x: x.isoformat())
+    try:
+        result_df["datetime"] = result_df["datetime"].apply(lambda x: x.isoformat())
+    except AttributeError as e:
+        if "isoformat" in str(e):
+            # Sometimes the datetime column is not actually a datetime object,
+            # but a string representation of it.
+            logger.warning(
+                "Datetime column is not a datetime object, skipping conversion to"
+                " ISO format."
+            )
+        else:
+            raise e
+
     result_df = result_df.fillna("N/A")
 
     return result_df
