@@ -49,7 +49,6 @@ def tag_events(
         query=f"_id:({' OR '.join([f'"{eid}"' for eid in event_ids])})",
         return_fields="_id,_index",
     ).to_dict(orient="records")
-    breakpoint()
     result = sketch.tag_events(events, [tag_name])
     tagged = result.get("number_of_events_with_added_tags", 0)
     return {
@@ -114,7 +113,10 @@ def discover_data_types(sketch_id: int) -> list[dict[str, int]]:
     """
 
     sketch = get_timesketch_client().get_sketch(sketch_id)
-    return _run_field_bucket_aggregation(sketch, "data_type")
+    try:
+        return _run_field_bucket_aggregation(sketch, "data_type")
+    except Exception as e:
+        return [{"result": f"Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -124,18 +126,21 @@ def count_distinct_field_values(sketch_id: int, field: str) -> list[dict[str, in
     Args:
         sketch_id: The ID of the Timesketch sketch to run the aggregation on.
         field: The field to count distinct values for, eg. "data_type",
-            "source_ip", "yara_match".
+          "source_ip", "yara_match".
 
     Returns:
         A list of dictionaries containing the aggregation results.
     """
 
     sketch = get_timesketch_client().get_sketch(sketch_id)
-    return _run_field_bucket_aggregation(sketch, field)
+    try:
+        return _run_field_bucket_aggregation(sketch, field)
+    except Exception as e:
+        return [{"result": f"Error: {str(e)}"}]
 
 
 @mcp.tool()
-def discover_fields_for_datatype(sketch_id: int, data_type: str) -> list[str]:
+def discover_fields_for_datatype(sketch_id: int, data_type: str) -> dict[str, Any]:
     """Discover fields for a specific data type in a Timesketch sketch.
 
     Args:
@@ -143,11 +148,15 @@ def discover_fields_for_datatype(sketch_id: int, data_type: str) -> list[str]:
         data_type: The data type to discover fields for.
 
     Returns:
-        A list of field names that are present in the events of the specified data type.
+        A list of field names that are present in the events of the specified data
+        type.
     """
 
     events = do_timesketch_search(
-        sketch_id=sketch_id, query=f'data_type:"{data_type}"', limit=1000, sort="desc"
+        sketch_id=sketch_id,
+        query=f'data_type:"{data_type}"',
+        limit=500,
+        sort="desc",
     ).to_dict(orient="records")
     fields = defaultdict(dict)
     sketch = get_timesketch_client().get_sketch(sketch_id)
@@ -156,19 +165,9 @@ def discover_fields_for_datatype(sketch_id: int, data_type: str) -> list[str]:
             if field in fields:
                 continue
 
-            top_values = _run_field_bucket_aggregation(sketch, field, limit=10)
-            max_occurrences = max([value["count"] for value in top_values], default=0)
-
-            # If the max occurrences for this field is less than 10,
-            # it means it's probably unique.
-            if max_occurrences < 10:
-                fields[field] = None
-                continue
-
-            examples = [value[field] for value in top_values]
-            fields[field] = examples
-
-    return [field for field in fields.keys() if fields[field] is not None]
+            top_values = _run_field_bucket_aggregation(sketch, field, limit=100)
+            fields[field] = [value[field] for value in top_values][:30]
+    return fields
 
 
 @mcp.tool()
@@ -191,19 +190,21 @@ def search_timesketch_events_substrings(
 
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
-        substrings: A list of substrings to search for in the event messages.
-        regex: If True, treat substrings as regex patterns. If False, treat them as
-            simple substrings. Defaults to False.
+        substrings: A list of substrings to search for in the event messages. No
+          more than 10 substrings are supported.
+        regex: If True, treat substrings as regex patterns. If False, treat them
+          as simple substrings. Defaults to False.
         boolean_operator: The boolean operator to use for combining multiple
-            substring queries. Must be one of "AND" or "OR". Defaults to "AND".
-        sort: Sort order for datetime field, either "asc" or "desc". Default is "desc".
-            Useful for getting the most recent or oldest events.
+          substring queries. Must be one of "AND" or "OR". Defaults to "AND".
+        sort: Sort order for datetime field, either "asc" or "desc". Default is
+          "desc". Useful for getting the most recent or oldest events.
         starred: If True, only return starred events. If False, return all events.
 
     Returns:
         A list of dictionaries representing the events found in the sketch.
         Each dictionary contains fields like datetime, data_type, tag, message,
-        and optionally yara_match and sha256_hash if they are present in the results.
+        and optionally yara_match and sha256_hash if they are present in the
+        results.
 
         If the query errors, an error object is returned instead.
     """
@@ -245,42 +246,83 @@ def search_timesketch_events_substrings(
 
 
 @mcp.tool()
+def get_events_by_id(
+    sketch_id: int,
+    event_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Get events by ID from a Timesketch sketch.
+
+    Args:
+        sketch_id: The ID of the Timesketch sketch to get events from.
+        event_ids: A list of event IDs to get.
+
+    Returns:
+        A list of dictionaries representing the events found in the sketch.
+        Each dictionary contains fields like datetime, data_type, tag, message,
+        and optionally yara_match and sha256_hash if they are present in the
+        results.
+    """
+
+    try:
+        results_df = do_timesketch_search(
+            sketch_id=sketch_id,
+            query=f"_id:({' OR '.join(event_ids)})",
+            sort="desc",
+            starred=False,
+        )
+        return results_df.to_dict(orient="records")
+    except Exception as e:
+        return [{"result": f"Error: {str(e)}"}]
+
+
+@mcp.tool()
 def search_timesketch_events_advanced(
     sketch_id: int,
     query: str,
     sort: str = "desc",
     starred: bool = False,
 ) -> list[dict[str, Any]]:
-    """
-    Search a Timesketch sketch using Lucene queries and return a list of event dictionaries.
+    """Search a Timesketch sketch using Lucene queries and return a list of event dictionaries.
 
         Events always contain the following fields:
         • datetime (useful for sorting)
         • data_type (useful for filtering).
+        • _id (useful for selecting individual events)
         • message
 
-        Always put double quotes around field values in queries (so data_type:"syslog:cron:task_run"
-        instead of data_type:syslog:cron:task_run)'
+        Always put double quotes around field values in queries
+        (so data_type:"syslog:cron:task_run" instead of
+        data_type:syslog:cron:task_run)'
+
+        Whenever possible, add a field prefix to search by, for example
+        `message:`, `data_type:` or `filename:` or
+        (data_type:"syslog:cron:task_run" AND filename:"foo")
+
+        Do not use more than 3 OR statements in a single query; this will
+        result in a query error.
 
         Examples:
         • Datatype       `data_type:"apache:access_log:entry"`'
-        • Field match    `filename:*.docx`
+        • Field match    `filename:*.docx` or `filename:"/etc/nginx*"`
         • Exact phrase   `"mimikatz.exe"`'
         • Boolean        `(ssh AND error) OR tag:bruteforce`
         • Date range     `datetime:[2025-04-01 TO 2025-04-02]`
         • Wildcard       `user:sam*`
-        • Regex          `host:/.*\\.google\\.com/`
+        • Regex          `host.keyword:/.*\\.google\\.com/`
+        • Raw event ID   `_id:gwSAL5kBWaQQldjMRC5H`
 
     Args:
         sketch_id: The ID of the Timesketch sketch to search.
         query: The Lucene/OpenSearch query string to use for searching.
-        sort: Sort order for datetime field, either "asc" or "desc". Default is "desc".
+        sort: Sort order for datetime field, either "asc" or "desc". Default is
+          "desc".
         starred: If True, only return starred events. If False, return all events.
 
     Returns:
         A list of dictionaries representing the events found in the sketch.
         Each dictionary contains fields like datetime, data_type, tag, message,
-        and optionally yara_match and sha256_hash if they are present in the results.
+        and optionally yara_match and sha256_hash if they are present in the
+        results.
 
         If the query errors, an error object is returned instead.
     """
@@ -336,11 +378,35 @@ def retry(
     return decorator
 
 
+def count_events_in_sketch(sketch_id: int, query: str) -> int:
+    """Counts the number of events matching a query in a Timesketch sketch.
+
+    Args:
+        sketch_id: The ID of the Timesketch sketch to count events in.
+        query: The Lucene/OpenSearch query string to use for counting. Use '*'
+            to count all events in a Timesketch sketch.
+
+    Returns:
+        The number of events matching the query in the sketch. If the query
+        errors, -1 is returned.
+    """
+    sketch = get_timesketch_client().get_sketch(sketch_id)
+    search_obj = search.Search(sketch=sketch)
+    search_obj.query_string = query
+    try:
+        return search_obj.expected_size
+    except Exception as e:
+        logger.exception(
+            "Error counting events in sketch %d with query %s: %s", sketch_id, query, e
+        )
+        return -1
+
+
 @retry(tries=3, delay=10, error_types=(ValueError,))
 def do_timesketch_search(
     sketch_id: int,
     query: str,
-    limit: int = 300,
+    limit: int = 500,
     sort: str = "desc",
     starred: bool = False,
     return_fields: str = "*,_id",
