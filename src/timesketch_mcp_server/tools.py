@@ -402,7 +402,7 @@ def count_events_in_sketch(sketch_id: int, query: str) -> int:
         return -1
 
 
-@retry(tries=3, delay=10, error_types=(ValueError,))
+@retry(tries=3, delay=10, error_types=(ValueError, RuntimeError))
 def do_timesketch_search(
     sketch_id: int,
     query: str,
